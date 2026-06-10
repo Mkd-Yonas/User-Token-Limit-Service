@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tls-service
+  labels:
+    app: tls-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: tls-service
+  template:
+    metadata:
+      labels:
+        app: tls-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8000"
+    spec:
+      containers:
+        - name: tls
+          image: tls-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: TLS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: tls-secrets
+                  key: database-url
+            - name: TLS_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: tls-secrets
+                  key: redis-url
+            - name: TLS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tls-secrets
+                  key: api-key
+            - name: TLS_ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tls-secrets
+                  key: admin-api-key
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tls-secrets
+type: Opaque
+stringData:
+  database-url: "postgresql+asyncpg://tls:CHANGEME@pg-primary:5432/tls"
+  redis-url: "redis://redis-cluster:6379/0"
+  api-key: "sk-tls-CHANGEME"
+  admin-api-key: "sk-tls-admin-CHANGEME"

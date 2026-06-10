@@ -62,8 +62,8 @@ TLS is a **standalone microservice** that sits between your API gateway (Spring)
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Mkd-Yonas/tls-service.git
-cd tls-service
+git clone https://github.com/Mkd-Yonas/User-Token-Limit-Service.git
+cd User-Token-Limit-Service
 
 # 2. Copy and configure environment
 cp .env.example .env

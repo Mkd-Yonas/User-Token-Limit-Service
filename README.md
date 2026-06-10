@@ -236,7 +236,7 @@ Add this interceptor to your Spring project. It calls TLS before and after every
 @Component
 public class TokenLimitInterceptor implements HandlerInterceptor {
 
-    private static final String TLS_BASE = "http://tls-service/v1";
+    private static final String TLS_BASE = "http://tls:8000/v1";
     private static final String TLS_API_KEY = System.getenv("TLS_API_KEY");
 
     @Override
@@ -325,7 +325,7 @@ public class WebConfig implements WebMvcConfigurer {
 **Environment variable Spring needs:**
 ```bash
 TLS_API_KEY=sk-tls-changeme
-TLS_BASE_URL=http://tls-service:8000  # or your deployed URL
+TLS_BASE_URL=http://tls:8000  # or your deployed URL
 ```
 
 ---
@@ -401,7 +401,7 @@ export function TokenUsageBar() {
 **Environment variables Next.js needs:**
 ```bash
 TLS_API_KEY=sk-tls-changeme
-TLS_BASE_URL=http://tls-service:8000  # or your deployed URL
+TLS_BASE_URL=http://tls:8000  # or your deployed URL
 ```
 
 ---
@@ -456,8 +456,8 @@ Add custom models in [app/utils/token_estimator.py](app/utils/token_estimator.py
 
 ```bash
 # 1. Build and push image to your registry
-docker build -f docker/Dockerfile --target prod -t your-registry/tls-service:latest .
-docker push your-registry/tls-service:latest
+docker build -f docker/Dockerfile --target prod -t your-registry/user-token-limit-service:latest .
+docker push your-registry/user-token-limit-service:latest
 
 # 2. Edit k8s/deployment.yaml — update image and Secret values
 
@@ -525,7 +525,7 @@ Key metrics to watch:
 ## Project Structure
 
 ```
-tls-service/
+User-Token-Limit-Service/
 ├── app/
 │   ├── main.py              # FastAPI app + health endpoints + scheduler
 │   ├── config.py            # All env vars (Pydantic Settings)

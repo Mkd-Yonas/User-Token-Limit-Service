@@ -34,12 +34,17 @@ http://localhost:8000/docs
 
 ---
 
-## Stop
+## Stop (keeps data)
 ```bash
 docker compose -f docker/docker-compose.yml down
 ```
 
-## Check containers
+## Remove everything (data + volumes)
+```bash
+docker compose -f docker/docker-compose.yml down -v --rmi all
+```
+
+## Check what is running
 ```bash
 docker ps
 ```

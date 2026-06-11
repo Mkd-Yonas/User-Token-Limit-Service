@@ -1,24 +1,25 @@
 # Token Limit Service (TLS)
 
-> **Production-grade token quota enforcement sidecar for LLM systems.**  
-> Built with FastAPI · PostgreSQL · Redis · Prometheus  
-> Language: Python 3.11+
+> **Production-grade token quota enforcement sidecar for LLM systems.**
+> Built with FastAPI · PostgreSQL · Redis · Prometheus · Docker
 
 ---
 
 ## What Is This?
 
-TLS is a **standalone microservice** that sits between your API gateway (Spring) and your LLM/RAG systems. It enforces token quotas, rate limits, and usage tracking **without touching the LLM itself**.
+TLS is a **standalone FastAPI microservice** that enforces token quotas and rate limits for LLM/AI systems. Your Spring API calls TLS before and after every LLM request. Your Next.js frontend calls TLS to show usage dashboards.
+
+**TLS never touches the LLM itself — it only validates and records.**
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
 │   Next.js   │────▶│  Spring API │────▶│  LLM / RAG      │
-│   (Client)  │     │  (Gateway)  │     │  (Your Systems) │
+│  (Frontend) │     │  (Gateway)  │     │  (AI Systems)   │
 └─────────────┘     └──────┬──────┘     └─────────────────┘
                            │
                            ▼
                     ┌─────────────┐
-                    │  TLS Module │  ◀── This repository
+                    │     TLS     │  ◀── This service
                     │  (FastAPI)  │
                     └──────┬──────┘
                            │
@@ -26,150 +27,187 @@ TLS is a **standalone microservice** that sits between your API gateway (Spring)
               ▼            ▼            ▼
           ┌──────┐   ┌──────────┐  ┌──────────┐
           │Redis │   │PostgreSQL│  │Prometheus│
-          │(Rate)│   │(Usage)   │  │(Metrics) │
           └──────┘   └──────────┘  └──────────┘
 ```
 
-**Design principle:** TLS is a sidecar validation service. Your existing systems call TLS *before* and *after* every LLM interaction. TLS never touches the LLM itself.
+---
+
+## How It Works
+
+1. **Spring calls `/v1/limits/check` before every LLM request** → TLS checks if the user has quota. Returns `allowed: true` or `429 blocked`.
+2. **Spring calls `/v1/limits/consume` after every LLM response** → TLS records actual tokens used and updates the balance.
+3. **Next.js calls `/v1/limits/usage`** → TLS returns daily/monthly usage for the dashboard.
 
 ---
 
-## Features
+## Project Structure
 
-| Feature | Details |
-|---------|---------|
-| Pre-flight check | Block requests before they hit the LLM if quota exceeded |
-| Post-flight consume | Deduct actual tokens used, refund overestimates |
-| Rate limiting | RPM, RPH, TPM, concurrent requests — all Redis-backed |
-| Daily & monthly quotas | PostgreSQL-persisted, Redis-cached (5 min TTL) |
-| Tier system | Free / Pro / Enterprise with custom overrides per user |
-| Model multipliers | gpt-4o=1x, claude-opus=3x, gpt-4o-mini=0.25x, etc. |
-| Idempotency | request_id deduplication prevents double-billing |
-| Stale request reaper | Auto-releases stuck reservations every minute |
-| Audit log | All limit changes tracked in `tls_limit_changes` |
-| Prometheus metrics | Latency, 429 rate, reaper stats |
-| Health probes | `/health/live` + `/health/ready` for Kubernetes |
+```
+User-Token-Limit-Service/
+├── app/
+│   ├── main.py              # FastAPI app + health endpoints + reaper scheduler
+│   ├── config.py            # All environment variables (Pydantic Settings)
+│   ├── dependencies.py      # PostgreSQL session, Redis client, API key auth
+│   ├── reaper_job.py        # Standalone reaper script (for K8s CronJob)
+│   ├── models/
+│   │   ├── database.py      # SQLAlchemy ORM models (4 tables)
+│   │   └── schemas.py       # Pydantic request/response schemas
+│   ├── routers/
+│   │   ├── limits.py        # /v1/limits/* endpoints
+│   │   └── admin.py         # /v1/admin/* endpoints
+│   ├── services/
+│   │   ├── limit_checker.py # Pre-flight check logic
+│   │   ├── limit_consumer.py# Post-flight consume logic
+│   │   ├── quota_service.py # Daily/monthly quota calculations
+│   │   ├── rate_limiter.py  # Redis sliding-window rate limiter
+│   │   └── reaper.py        # Stale request cleanup
+│   └── utils/
+│       ├── token_estimator.py # Model cost multipliers
+│       └── idempotency.py     # request_id deduplication
+├── migrations/
+│   ├── env.py               # Alembic async config
+│   └── versions/
+│       └── 0001_initial_schema.py  # Full schema + 3 default tiers
+├── tests/
+│   ├── conftest.py          # fakeredis + aiosqlite fixtures
+│   ├── unit/                # Token estimator unit tests
+│   └── integration/         # Full API integration tests
+├── k8s/
+│   ├── deployment.yaml      # Kubernetes deployment + secret
+│   ├── service.yaml         # ClusterIP service
+│   └── cronjob-reaper.yaml  # Reaper CronJob (every 1 min)
+├── docker/
+│   ├── Dockerfile           # Multi-stage: base → prod → reaper
+│   └── docker-compose.yml   # Full local stack (PG + Redis + Prometheus)
+├── prometheus/
+│   └── prometheus.yml       # Prometheus scrape config
+├── .env.example             # All required environment variables
+├── requirements.txt         # Production dependencies
+├── requirements-dev.txt     # Dev + test dependencies
+├── pyproject.toml           # Build config + all dependencies
+└── alembic.ini              # Alembic migration config
+```
 
 ---
 
-## Quick Start (Docker Compose)
+## Quick Start
 
 ### Prerequisites
-- Docker + Docker Compose installed
+- Docker + Docker Compose installed on your server
 - Ports `8000`, `5432`, `6379`, `9090` available
 
-### Steps
+### Run It
 
 ```bash
-# 1. Clone the repository
+# 1. Clone
 git clone https://github.com/Mkd-Yonas/User-Token-Limit-Service.git
 cd User-Token-Limit-Service
 
-# 2. Copy and configure environment
+# 2. Create config
 cp .env.example .env
-# Edit .env — change API keys at minimum
 
 # 3. Start all services
 docker compose -f docker/docker-compose.yml up -d
 
-# 4. Verify everything is running
+# 4. Verify
 curl http://localhost:8000/health/ready
 # Expected: {"status":"ok","postgres":"ok","redis":"ok"}
 
 # 5. Open API docs
-open http://localhost:8000/docs
+# http://localhost:8000/docs
 ```
 
-Migrations run automatically on startup. Three default tiers (`free`, `pro`, `enterprise`) are seeded.
+> Migrations run automatically on startup. Three default tiers (`free`, `pro`, `enterprise`) are seeded.
+
+### Stop / Remove
+
+```bash
+# Stop (keeps data)
+docker compose -f docker/docker-compose.yml down
+
+# Remove everything including data
+docker compose -f docker/docker-compose.yml down -v --rmi all
+```
 
 ---
 
-## API Reference
+## What Starts When You Run Docker Compose
 
-**Base URL:** `http://your-server:8000/v1`  
-**Authentication:** All endpoints require `Authorization: Bearer <API_KEY>` header.  
-Two keys exist: service key (for Spring) and admin key (for admin operations).
-
-### Endpoints
-
-| Method | Path | Auth | Called By | Purpose |
-|--------|------|------|-----------|---------|
-| GET | `/health/live` | None | K8s | Liveness probe |
-| GET | `/health/ready` | None | K8s | Readiness — checks PG + Redis |
-| POST | `/v1/limits/check` | Service key | Spring | Pre-flight quota check |
-| POST | `/v1/limits/consume` | Service key | Spring | Post-flight token deduction |
-| GET | `/v1/limits/usage` | Service key | Next.js | Current period usage |
-| GET | `/v1/limits/history` | Service key | Next.js | Paginated request history |
-| POST | `/v1/admin/limits` | Admin key | Admin panel | Set/override user limits |
-| POST | `/v1/admin/refill` | Admin key | Billing system | Add credits to user |
-| GET | `/v1/admin/tiers` | Admin key | Admin panel | List all tiers |
-| POST | `/v1/admin/tiers` | Admin key | Admin panel | Create/update a tier |
+| Container | Port | Purpose |
+|-----------|------|---------|
+| `docker-tls-1` | 8000 | TLS FastAPI service |
+| `docker-postgres-1` | 5432 | Usage storage (partitioned by month) |
+| `docker-redis-1` | 6379 | Rate limiting + quota cache |
+| `docker-prometheus-1` | 9090 | Metrics monitoring |
 
 ---
 
-### POST `/v1/limits/check`
+## API Endpoints
 
-Call this **before** every LLM request.
+**Base URL:** `http://your-server:8000/v1`
+**Auth:** `Authorization: Bearer <API_KEY>` header on every request.
 
-**Request:**
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/health/live` | None | Is the process up? |
+| GET | `/health/ready` | None | Are PG + Redis connected? |
+| POST | `/v1/limits/check` | Service key | Pre-flight quota check |
+| POST | `/v1/limits/consume` | Service key | Post-flight token deduction |
+| GET | `/v1/limits/usage` | Service key | Current usage for a user |
+| GET | `/v1/limits/history` | Service key | Paginated request history |
+| POST | `/v1/admin/limits` | Admin key | Override limits for a user |
+| POST | `/v1/admin/refill` | Admin key | Add credits to a user |
+| GET | `/v1/admin/tiers` | Admin key | List all tiers |
+| POST | `/v1/admin/tiers` | Admin key | Create or update a tier |
+
+---
+
+## API Examples
+
+### POST `/v1/limits/check` — Before LLM call
 ```json
+Request:
 {
   "user_id": "uuid",
-  "org_id": "uuid",
   "estimated_input_tokens": 1500,
   "estimated_output_tokens": 500,
   "model_id": "gpt-4o",
   "request_id": "uuid"
 }
-```
 
-**Response 200 — Allowed:**
-```json
+Response 200 (allowed):
 {
   "allowed": true,
   "request_id": "uuid",
   "remaining_tokens": 84500,
-  "resets_at": "2026-06-11T00:00:00Z",
+  "resets_at": "2026-06-12T00:00:00Z",
   "tier": "pro"
 }
-```
 
-**Response 429 — Blocked:**
-```json
+Response 429 (blocked):
 {
   "allowed": false,
   "reason": "TOKEN_QUOTA_EXCEEDED",
   "limit_type": "daily_tokens",
   "current_usage": 100000,
   "limit": 100000,
-  "resets_at": "2026-06-11T00:00:00Z",
+  "resets_at": "2026-06-12T00:00:00Z",
   "suggested_action": "UPGRADE_TIER"
 }
 ```
 
----
-
-### POST `/v1/limits/consume`
-
-Call this **after** every LLM response — even on error (use 0 tokens if cancelled).
-
-**Request:**
+### POST `/v1/limits/consume` — After LLM response
 ```json
+Request:
 {
   "user_id": "uuid",
   "request_id": "uuid",
   "actual_input_tokens": 1450,
   "actual_output_tokens": 620,
-  "model_id": "gpt-4o",
-  "metadata": {
-    "conversation_id": "uuid",
-    "feature": "rag_chat"
-  }
+  "model_id": "gpt-4o"
 }
-```
 
-**Response 200:**
-```json
+Response 200:
 {
   "consumed": true,
   "total_deducted": 2070,
@@ -179,13 +217,7 @@ Call this **after** every LLM response — even on error (use 0 tokens if cancel
 }
 ```
 
----
-
-### GET `/v1/limits/usage`
-
-**Query params:** `user_id=<uuid>`
-
-**Response 200:**
+### GET `/v1/limits/usage?user_id=<uuid>`
 ```json
 {
   "user_id": "uuid",
@@ -194,43 +226,59 @@ Call this **after** every LLM response — even on error (use 0 tokens if cancel
   "daily_limit": 10000,
   "monthly_used": 45000,
   "monthly_limit": 100000,
-  "resets_at": "2026-06-11T00:00:00Z",
-  "period_date": "2026-06-10"
+  "resets_at": "2026-06-12T00:00:00Z",
+  "period_date": "2026-06-11"
 }
 ```
 
 ---
 
-### GET `/v1/limits/history`
+## Environment Variables
 
-**Query params:** `user_id=<uuid>&page=1&page_size=20`
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TLS_DATABASE_URL` | `postgresql+asyncpg://tls:secret@localhost:5432/tls` | PostgreSQL connection |
+| `TLS_REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
+| `TLS_API_KEY` | `sk-tls-changeme` | Service key — Spring uses this |
+| `TLS_ADMIN_API_KEY` | `sk-tls-admin-changeme` | Admin key — admin panel uses this |
+| `TLS_DEFAULT_TIER` | `free` | Tier for users not in the database |
+| `TLS_GRACE_PERCENTAGE` | `5` | % overage allowed before flagging |
+| `TLS_STRICT_MODE` | `false` | Block requests exceeding grace % |
+| `TLS_ENABLE_ORG_LIMITS` | `true` | Enable org-level limits |
+| `TLS_ENABLE_CONCURRENT_LIMITS` | `true` | Enable concurrent request limits |
+| `TLS_ENABLE_MODEL_MULTIPLIERS` | `true` | Apply model cost multipliers |
+| `TLS_REAPER_INTERVAL_MINUTES` | `1` | How often reaper checks for stuck requests |
+| `TLS_REAPER_STALE_THRESHOLD_MINUTES` | `5` | Age before a pending request is reaped |
 
-**Response 200:**
-```json
-{
-  "user_id": "uuid",
-  "page": 1,
-  "page_size": 20,
-  "total": 142,
-  "records": [
-    {
-      "request_id": "uuid",
-      "tokens_input": 1450,
-      "tokens_output": 620,
-      "tokens_total": 2070,
-      "model_id": "gpt-4o",
-      "created_at": "2026-06-10T12:00:00Z",
-      "metadata": {"feature": "rag_chat"}
-    }
-  ]
-}
-```
+> **Change `TLS_API_KEY` and `TLS_ADMIN_API_KEY` before going to production.**
+
+---
+
+## Default Tiers (seeded automatically)
+
+| Tier | Daily Tokens | Monthly Tokens | RPM | Concurrent |
+|------|-------------|----------------|-----|-----------|
+| `free` | 10,000 | 100,000 | 10 | 3 |
+| `pro` | 100,000 | 2,000,000 | 60 | 10 |
+| `enterprise` | 1,000,000 | 20,000,000 | 200 | 50 |
+
+---
+
+## Model Cost Multipliers
+
+| Model | Multiplier |
+|-------|-----------|
+| `gpt-4o` | 1.0× (baseline) |
+| `gpt-4o-mini` | 0.25× |
+| `claude-3-5-sonnet` / `claude-sonnet-4-6` | 1.0× |
+| `claude-3-opus` / `claude-opus-4-8` | 3.0× |
+| `claude-3-haiku` / `claude-haiku-4-5` | 0.25× |
+
+Add custom models in [app/utils/token_estimator.py](app/utils/token_estimator.py).
 
 ---
 
 ## Spring API Integration
-
-Add this interceptor to your Spring project. It calls TLS before and after every LLM request.
 
 ```java
 @Component
@@ -243,8 +291,6 @@ public class TokenLimitInterceptor implements HandlerInterceptor {
     public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) throws Exception {
         String userId = jwtUtil.getUserId(req);
         String requestId = UUID.randomUUID().toString();
-        int estimatedInput = estimateTokens(req.getBody());
-        int estimatedOutput = 500; // your default estimate
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Bearer " + TLS_API_KEY);
@@ -252,25 +298,22 @@ public class TokenLimitInterceptor implements HandlerInterceptor {
 
         Map<String, Object> body = Map.of(
             "user_id", userId,
-            "estimated_input_tokens", estimatedInput,
-            "estimated_output_tokens", estimatedOutput,
+            "estimated_input_tokens", 1000,
+            "estimated_output_tokens", 500,
             "model_id", "gpt-4o",
             "request_id", requestId
         );
 
         ResponseEntity<Map> response = restTemplate.postForEntity(
             TLS_BASE + "/limits/check",
-            new HttpEntity<>(body, headers),
-            Map.class
+            new HttpEntity<>(body, headers), Map.class
         );
 
         if (response.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS) {
             res.setStatus(429);
-            res.getWriter().write(response.getBody().toString());
             return false;
         }
 
-        // Store request_id for consume step
         req.setAttribute("tls_request_id", requestId);
         req.setAttribute("tls_user_id", userId);
         return true;
@@ -280,11 +323,11 @@ public class TokenLimitInterceptor implements HandlerInterceptor {
     public void afterCompletion(HttpServletRequest req, HttpServletResponse res, Object handler, Exception ex) {
         String requestId = (String) req.getAttribute("tls_request_id");
         String userId = (String) req.getAttribute("tls_user_id");
-        int actualInput = (int) req.getAttribute("actual_input_tokens");   // set by your LLM handler
-        int actualOutput = (int) req.getAttribute("actual_output_tokens"); // set by your LLM handler
-
-        // Always call consume — even on error (use 0 tokens)
         if (requestId == null) return;
+
+        // Always call consume — even on error (use 0 tokens if LLM failed)
+        int actualInput = (int) req.getAttribute("actual_input_tokens");
+        int actualOutput = (int) req.getAttribute("actual_output_tokens");
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Bearer " + TLS_API_KEY);
@@ -300,50 +343,33 @@ public class TokenLimitInterceptor implements HandlerInterceptor {
 
         restTemplate.postForEntity(
             TLS_BASE + "/limits/consume",
-            new HttpEntity<>(body, headers),
-            Map.class
+            new HttpEntity<>(body, headers), Map.class
         );
     }
 }
 ```
 
-**Register the interceptor:**
-```java
-@Configuration
-public class WebConfig implements WebMvcConfigurer {
-    @Autowired
-    TokenLimitInterceptor tokenLimitInterceptor;
-
-    @Override
-    public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(tokenLimitInterceptor)
-                .addPathPatterns("/api/llm/**"); // adjust to your LLM routes
-    }
-}
-```
-
-**Environment variable Spring needs:**
+**Spring environment variables needed:**
 ```bash
 TLS_API_KEY=sk-tls-changeme
-TLS_BASE_URL=http://tls:8000  # or your deployed URL
+TLS_BASE_URL=http://tls:8000
 ```
 
 ---
 
 ## Next.js Integration
 
-**Never expose `TLS_API_KEY` to the browser.** Always proxy through a server-side API route.
+**Never expose `TLS_API_KEY` to the browser.** Always proxy through server-side routes.
 
-**Usage dashboard — `app/api/tls/usage/route.ts`:**
 ```typescript
+// app/api/tls/usage/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getUserFromSession } from "@/lib/auth";
 
 const TLS_BASE = process.env.TLS_BASE_URL!;
 const TLS_API_KEY = process.env.TLS_API_KEY!;
 
 export async function GET(req: NextRequest) {
-  const userId = await getUserFromSession(req);
+  const userId = await getUserFromSession(req); // your auth function
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const res = await fetch(`${TLS_BASE}/v1/limits/usage?user_id=${userId}`, {
@@ -351,209 +377,73 @@ export async function GET(req: NextRequest) {
     cache: "no-store",
   });
 
-  const data = await res.json();
-  return NextResponse.json(data);
-}
-```
-
-**History page — `app/api/tls/history/route.ts`:**
-```typescript
-export async function GET(req: NextRequest) {
-  const userId = await getUserFromSession(req);
-  const page = req.nextUrl.searchParams.get("page") ?? "1";
-
-  const res = await fetch(
-    `${TLS_BASE}/v1/limits/usage-history?user_id=${userId}&page=${page}&page_size=20`,
-    { headers: { Authorization: `Bearer ${TLS_API_KEY}` } }
-  );
-
   return NextResponse.json(await res.json());
 }
 ```
 
-**Client-side usage component:**
-```typescript
-"use client";
-import { useEffect, useState } from "react";
-
-export function TokenUsageBar() {
-  const [usage, setUsage] = useState<any>(null);
-
-  useEffect(() => {
-    fetch("/api/tls/usage").then(r => r.json()).then(setUsage);
-  }, []);
-
-  if (!usage) return <div>Loading...</div>;
-
-  const pct = Math.round((usage.daily_used / usage.daily_limit) * 100);
-  return (
-    <div>
-      <p>{usage.daily_used.toLocaleString()} / {usage.daily_limit.toLocaleString()} tokens today ({usage.tier})</p>
-      <div style={{ width: "100%", background: "#eee", borderRadius: 4 }}>
-        <div style={{ width: `${pct}%`, background: pct > 90 ? "red" : "green", height: 8, borderRadius: 4 }} />
-      </div>
-      <p>Resets at {new Date(usage.resets_at).toLocaleString()}</p>
-    </div>
-  );
-}
-```
-
-**Environment variables Next.js needs:**
+**Next.js environment variables needed:**
 ```bash
 TLS_API_KEY=sk-tls-changeme
-TLS_BASE_URL=http://tls:8000  # or your deployed URL
+TLS_BASE_URL=http://tls:8000
 ```
 
 ---
 
-## Environment Variables
-
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `TLS_DATABASE_URL` | — | Yes | `postgresql+asyncpg://user:pass@host:5432/db` |
-| `TLS_REDIS_URL` | — | Yes | `redis://host:6379/0` |
-| `TLS_API_KEY` | — | Yes | Service auth key (Spring uses this) |
-| `TLS_ADMIN_API_KEY` | — | Yes | Admin auth key (admin panel uses this) |
-| `TLS_DEFAULT_TIER` | `free` | No | Fallback tier for unknown users |
-| `TLS_GRACE_PERCENTAGE` | `5` | No | % overage allowed before flagging |
-| `TLS_STRICT_MODE` | `false` | No | Block requests exceeding grace |
-| `TLS_ENABLE_ORG_LIMITS` | `true` | No | Enable org-level limits |
-| `TLS_ENABLE_CONCURRENT_LIMITS` | `true` | No | Enable concurrent request limits |
-| `TLS_ENABLE_MODEL_MULTIPLIERS` | `true` | No | Apply model cost multipliers |
-| `TLS_REAPER_INTERVAL_MINUTES` | `1` | No | How often reaper runs |
-| `TLS_REAPER_STALE_THRESHOLD_MINUTES` | `5` | No | Age before pending request is reaped |
-
----
-
-## Default Tiers
-
-| Tier | Daily Tokens | Monthly Tokens | RPM | RPH | TPM | Concurrent |
-|------|-------------|----------------|-----|-----|-----|-----------|
-| `free` | 10,000 | 100,000 | 10 | 100 | 20,000 | 3 |
-| `pro` | 100,000 | 2,000,000 | 60 | 1,000 | 200,000 | 10 |
-| `enterprise` | 1,000,000 | 20,000,000 | 200 | 5,000 | 1,000,000 | 50 |
-
-Create custom tiers via `POST /v1/admin/tiers` using the admin key.
-
----
-
-## Model Cost Multipliers
-
-| Model | Multiplier | Effective Cost |
-|-------|-----------|----------------|
-| `gpt-4o` | 1.0× | baseline |
-| `gpt-4o-mini` | 0.25× | 4× cheaper |
-| `gpt-4-turbo` | 2.0× | 2× more expensive |
-| `claude-3-5-sonnet` / `claude-sonnet-4-6` | 1.0× | same as baseline |
-| `claude-3-opus` / `claude-opus-4-8` | 3.0× | 3× more expensive |
-| `claude-3-haiku` / `claude-haiku-4-5` | 0.25× | 4× cheaper |
-
-Add custom models in [app/utils/token_estimator.py](app/utils/token_estimator.py).
-
----
-
-## Kubernetes Deployment
-
-```bash
-# 1. Build and push image to your registry
-docker build -f docker/Dockerfile --target prod -t your-registry/user-token-limit-service:latest .
-docker push your-registry/user-token-limit-service:latest
-
-# 2. Edit k8s/deployment.yaml — update image and Secret values
-
-# 3. Apply manifests
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
-kubectl apply -f k8s/cronjob-reaper.yaml
-
-# 4. Run migrations as a Job before deploying
-kubectl exec -it <tls-pod> -- alembic upgrade head
-```
-
----
-
-## Database Migrations
+## Running Migrations Manually
 
 ```bash
 # Apply all migrations
-TLS_DATABASE_URL=postgresql+asyncpg://... alembic upgrade head
+TLS_DATABASE_URL=postgresql+asyncpg://tls:secret@localhost:5432/tls alembic upgrade head
 
-# Create migration after model changes
+# Create a new migration after model changes
 alembic revision --autogenerate -m "describe your change"
 
 # Rollback one step
 alembic downgrade -1
 ```
 
-**Partition management:** The `tls_usage` table is partitioned by month. New partitions must be created before month-end. For production, install `pg_partman` + `pg_cron`:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS pg_partman;
-CREATE EXTENSION IF NOT EXISTS pg_cron;
-
-SELECT partman.create_parent('public.tls_usage', 'period_start', 'native', 'monthly', p_premake := 2);
-SELECT cron.schedule('tls-partman', '0 1 * * *', 'SELECT partman.run_maintenance(p_analyze := false)');
-```
+> Inside Docker Compose, migrations run automatically before the server starts.
 
 ---
 
 ## Running Tests
 
 ```bash
-pip install ".[dev]"
-pytest tests/ -v --cov=app --cov-report=term-missing
+pip install -r requirements-dev.txt
+pytest tests/ -v
 ```
 
-Tests use `fakeredis` + `aiosqlite` — no real PostgreSQL or Redis needed.
+> Tests use `fakeredis` and `aiosqlite` — no real PostgreSQL or Redis needed.
+
+---
+
+## Kubernetes Deployment
+
+```bash
+# Build and push image
+docker build -f docker/Dockerfile --target prod -t your-registry/user-token-limit-service:latest .
+docker push your-registry/user-token-limit-service:latest
+
+# Edit k8s/deployment.yaml — update image URL and Secret values
+
+# Deploy
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/cronjob-reaper.yaml
+```
 
 ---
 
 ## Monitoring
 
-**Prometheus** is available at port `9090` (or `:29090` via SSH tunnel).
+- **Prometheus** → `http://localhost:9090`
+- **Metrics endpoint** → `http://localhost:8000/metrics`
 
-Key metrics to watch:
-
-| Metric | Alert Threshold |
-|--------|----------------|
-| `tls_request_duration_seconds` p99 | > 50ms for check, > 100ms for consume |
-| `tls_requests_total{result="blocked"}` | > 10% of total |
+| Metric | Alert When |
+|--------|-----------|
+| `tls_request_duration_seconds` p99 | > 50ms (check), > 100ms (consume) |
+| `tls_requests_total{result="blocked"}` | > 10% of total requests |
 | `tls_reaper_reaped_total` | > 5% of requests |
-
----
-
-## Project Structure
-
-```
-User-Token-Limit-Service/
-├── app/
-│   ├── main.py              # FastAPI app + health endpoints + scheduler
-│   ├── config.py            # All env vars (Pydantic Settings)
-│   ├── dependencies.py      # DB session, Redis client, auth
-│   ├── reaper_job.py        # Standalone reaper (for K8s CronJob)
-│   ├── models/
-│   │   ├── database.py      # SQLAlchemy ORM models
-│   │   └── schemas.py       # Pydantic request/response schemas
-│   ├── routers/
-│   │   ├── limits.py        # /limits/* endpoints
-│   │   └── admin.py         # /admin/* endpoints
-│   ├── services/
-│   │   ├── limit_checker.py # Pre-flight check logic
-│   │   ├── limit_consumer.py# Post-flight consume logic
-│   │   ├── quota_service.py # Daily/monthly quota calculations
-│   │   ├── rate_limiter.py  # Redis sliding-window rate limiter
-│   │   └── reaper.py        # Stale request cleanup
-│   └── utils/
-│       ├── token_estimator.py # Model multipliers
-│       └── idempotency.py     # request_id deduplication
-├── migrations/              # Alembic migrations
-├── tests/                   # pytest (unit + integration)
-├── k8s/                     # Kubernetes manifests
-├── docker/                  # Dockerfile + docker-compose
-├── prometheus/              # Prometheus config
-├── .env.example             # All required env vars
-└── README.md
-```
 
 ---
 
@@ -561,54 +451,16 @@ User-Token-Limit-Service/
 
 | Layer | Implementation |
 |-------|---------------|
-| Authentication | API Key via `Authorization: Bearer` header |
-| Service vs Admin | Two separate keys — different permission levels |
-| Idempotency | `request_id` deduplication prevents double-billing |
-| Audit trail | All limit changes logged to `tls_limit_changes` |
-| No LLM access | TLS never reads your prompts or responses |
-| Clock trust | Server-generated timestamps only — client time ignored |
+| Authentication | `Authorization: Bearer <key>` header |
+| Two permission levels | Service key (`/limits/*`) vs Admin key (`/admin/*`) |
+| Double-billing prevention | `request_id` unique constraint at DB + Redis level |
+| Audit trail | All limit changes logged to `tls_limit_changes` table |
+| No LLM access | TLS never reads prompts or responses |
 
 ---
 
-## Error Handling
+## GitHub
 
-| Scenario | TLS Response | What Spring should do |
-|----------|-------------|----------------------|
-| Redis down | Falls back to PostgreSQL | Continue — slower but correct |
-| PostgreSQL down | 503 Service Unavailable | Retry with exponential backoff |
-| TLS timeout | — | Default to **allow** (configurable) |
-| Duplicate request_id | Idempotent response | Safe to retry |
-| Consume without matching check | Logs warning, still deducts | Normal flow |
-
----
-
-## Technology Stack
-
-| Component | Technology | Why |
-|-----------|-----------|-----|
-| Framework | FastAPI + Uvicorn | Async, fast, auto-docs |
-| ORM | SQLAlchemy 2.0 async + asyncpg | True async PG driver |
-| Cache / Rate limit | Redis (async) | Sub-millisecond operations |
-| Migrations | Alembic | Schema version control |
-| Settings | Pydantic-Settings | Type-safe env vars |
-| Metrics | Prometheus-client | Industry standard |
-| Scheduler | APScheduler | Embedded reaper (no extra infra) |
-| Testing | pytest + fakeredis + aiosqlite | No real infra needed for tests |
-
----
-
-## Specification
-
-This service was built from the **Token Limit Service Production Specification v2.0** covering:
-- All 7 limit types (RPM, RPH, TPM, daily, monthly, hard balance, concurrent)
-- Token reservation system (prevents race-condition overages)
-- Stale request reaper (auto-releases stuck reservations)
-- Overage grace handling (5% default)
-- pg_partman-ready schema (monthly partitioned usage table)
-- Full idempotency via request_id deduplication at both Redis and DB level
-
----
-
-## Contact / Issues
+**Repository:** https://github.com/Mkd-Yonas/User-Token-Limit-Service
 
 Open a GitHub Issue for bugs or integration questions.

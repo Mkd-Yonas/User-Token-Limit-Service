@@ -7,21 +7,22 @@
 
 ## What Is This?
 
-TLS is a **standalone FastAPI microservice** that enforces token quotas and rate limits for LLM/AI systems. Your Spring API calls TLS before and after every LLM request. Your Next.js frontend calls TLS to show usage dashboards.
+TLS is a **standalone FastAPI microservice** that enforces token quotas and rate limits for LLM/AI systems. The RAG FastAPI calls TLS before and after every LLM request. Next.js frontend calls TLS to show usage dashboards.
 
 **TLS never touches the LLM itself — it only validates and records.**
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
-│   Next.js   │────▶│  Spring API │────▶│  LLM / RAG      │
-│  (Frontend) │     │  (Gateway)  │     │  (AI Systems)   │
+│   Next.js   │────▶│  RAG FastAPI│────▶│  LLM (vLLM)     │
+│  (Frontend) │     │  (Gateway)  │     │  Keural-SFT2    │
 └─────────────┘     └──────┬──────┘     └─────────────────┘
-                           │
-                           ▼
-                    ┌─────────────┐
-                    │     TLS     │  ◀── This service
-                    │  (FastAPI)  │
-                    └──────┬──────┘
+                           │                      │
+                    [check]│[consume]              │
+                           ▼                      ▼
+                    ┌─────────────┐        ┌─────────────┐
+                    │     TLS     │        │  Spring API │
+                    │  (This svc) │        │  (Database) │
+                    └──────┬──────┘        └─────────────┘
                            │
               ┌────────────┼────────────┐
               ▼            ▼            ▼
@@ -34,8 +35,8 @@ TLS is a **standalone FastAPI microservice** that enforces token quotas and rate
 
 ## How It Works
 
-1. **Spring calls `/v1/limits/check` before every LLM request** → TLS checks if the user has quota. Returns `allowed: true` or `429 blocked`.
-2. **Spring calls `/v1/limits/consume` after every LLM response** → TLS records actual tokens used and updates the balance.
+1. **RAG FastAPI calls `/v1/limits/check` before every LLM request** → TLS checks if the user has quota. Returns `allowed: true` or `429 blocked`.
+2. **RAG FastAPI calls `/v1/limits/consume` after every LLM response** → TLS records actual tokens used and updates the balance.
 3. **Next.js calls `/v1/limits/usage`** → TLS returns daily/monthly usage for the dashboard.
 
 ---
@@ -239,7 +240,7 @@ Response 200:
 |----------|---------|-------------|
 | `TLS_DATABASE_URL` | `postgresql+asyncpg://tls:secret@localhost:5432/tls` | PostgreSQL connection |
 | `TLS_REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
-| `TLS_API_KEY` | `sk-tls-changeme` | Service key — Spring uses this |
+| `TLS_API_KEY` | `sk-tls-changeme` | Service key — RAG FastAPI uses this |
 | `TLS_ADMIN_API_KEY` | `sk-tls-admin-changeme` | Admin key — admin panel uses this |
 | `TLS_DEFAULT_TIER` | `free` | Tier for users not in the database |
 | `TLS_GRACE_PERCENTAGE` | `5` | % overage allowed before flagging |
@@ -273,86 +274,121 @@ Response 200:
 | `claude-3-5-sonnet` / `claude-sonnet-4-6` | 1.0× |
 | `claude-3-opus` / `claude-opus-4-8` | 3.0× |
 | `claude-3-haiku` / `claude-haiku-4-5` | 0.25× |
+| `mkd-hossain/keural-sft2` | 1.0× |
 
 Add custom models in [app/utils/token_estimator.py](app/utils/token_estimator.py).
 
 ---
 
-## Spring API Integration
+## RAG FastAPI Integration
 
-```java
-@Component
-public class TokenLimitInterceptor implements HandlerInterceptor {
+TLS integrates into the RAG FastAPI (`mkd-keural-be-fastapi`) in two steps.
 
-    private static final String TLS_BASE = "http://tls:8000/v1";
-    private static final String TLS_API_KEY = System.getenv("TLS_API_KEY");
+### Step 1 — Add `app/services/tls_client.py`
 
-    @Override
-    public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) throws Exception {
-        String userId = jwtUtil.getUserId(req);
-        String requestId = UUID.randomUUID().toString();
+```python
+import os
+import logging
+import httpx
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + TLS_API_KEY);
-        headers.setContentType(MediaType.APPLICATION_JSON);
+logger = logging.getLogger(__name__)
 
-        Map<String, Object> body = Map.of(
-            "user_id", userId,
-            "estimated_input_tokens", 1000,
-            "estimated_output_tokens", 500,
-            "model_id", "gpt-4o",
-            "request_id", requestId
-        );
+TLS_BASE_URL = os.getenv("TLS_BASE_URL", "http://localhost:8000")
+TLS_API_KEY  = os.getenv("TLS_API_KEY", "sk-tls-changeme")
+TLS_MODEL_ID = "mkd-hossain/keural-sft2"
 
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-            TLS_BASE + "/limits/check",
-            new HttpEntity<>(body, headers), Map.class
-        );
 
-        if (response.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS) {
-            res.setStatus(429);
-            return false;
-        }
+def tls_check(user_id: str, request_id: str, estimated_input: int, estimated_output: int) -> tuple[dict, int]:
+    try:
+        resp = httpx.post(
+            f"{TLS_BASE_URL}/v1/limits/check",
+            headers={"Authorization": f"Bearer {TLS_API_KEY}"},
+            json={
+                "user_id": user_id,
+                "request_id": request_id,
+                "estimated_input_tokens": estimated_input,
+                "estimated_output_tokens": estimated_output,
+                "model_id": TLS_MODEL_ID,
+            },
+            timeout=5.0,
+        )
+        return resp.json(), resp.status_code
+    except Exception as e:
+        logger.error("TLS check failed: %s", e)
+        return {"allowed": True}, 200  # fail open — don't block user if TLS is down
 
-        req.setAttribute("tls_request_id", requestId);
-        req.setAttribute("tls_user_id", userId);
-        return true;
-    }
 
-    @Override
-    public void afterCompletion(HttpServletRequest req, HttpServletResponse res, Object handler, Exception ex) {
-        String requestId = (String) req.getAttribute("tls_request_id");
-        String userId = (String) req.getAttribute("tls_user_id");
-        if (requestId == null) return;
-
-        // Always call consume — even on error (use 0 tokens if LLM failed)
-        int actualInput = (int) req.getAttribute("actual_input_tokens");
-        int actualOutput = (int) req.getAttribute("actual_output_tokens");
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + TLS_API_KEY);
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        Map<String, Object> body = Map.of(
-            "user_id", userId,
-            "request_id", requestId,
-            "actual_input_tokens", actualInput,
-            "actual_output_tokens", actualOutput,
-            "model_id", "gpt-4o"
-        );
-
-        restTemplate.postForEntity(
-            TLS_BASE + "/limits/consume",
-            new HttpEntity<>(body, headers), Map.class
-        );
-    }
-}
+def tls_consume(user_id: str, request_id: str, actual_input: int, actual_output: int) -> None:
+    try:
+        httpx.post(
+            f"{TLS_BASE_URL}/v1/limits/consume",
+            headers={"Authorization": f"Bearer {TLS_API_KEY}"},
+            json={
+                "user_id": user_id,
+                "request_id": request_id,
+                "actual_input_tokens": actual_input,
+                "actual_output_tokens": actual_output,
+                "model_id": TLS_MODEL_ID,
+            },
+            timeout=5.0,
+        )
+    except Exception as e:
+        logger.error("TLS consume failed: %s", e)
 ```
 
-**Spring environment variables needed:**
+### Step 2 — Modify the LLM endpoint
+
+Wrap the `_client.chat.completions.create()` call with TLS check and consume:
+
+```python
+from app.services.tls_client import tls_check, tls_consume
+import uuid
+
+@app.post("/ask", response_model=QueryResponse)
+def ask(request: ChatRequest):  # ChatRequest already has user_id and room_id
+
+    # Generate a unique ID for this specific message
+    tls_request_id = str(uuid.uuid4())
+
+    # Estimate tokens before the LLM call
+    estimated_input  = len(request.query) // 4 + 800  # query + RAG context overhead
+    estimated_output = 512                             # MAX_TOKENS
+
+    # ── TLS Check (before LLM) ────────────────────────────────────────────────
+    tls_result, status_code = tls_check(
+        user_id=request.user_id,
+        request_id=tls_request_id,
+        estimated_input=estimated_input,
+        estimated_output=estimated_output,
+    )
+    if status_code == 429:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "Token quota exceeded",
+                "reason": tls_result.get("reason"),
+                "resets_at": tls_result.get("resets_at"),
+            }
+        )
+
+    # ... existing retrieval and LLM call ...
+    response = _client.chat.completions.create(...)
+
+    # ── TLS Consume (after LLM) ───────────────────────────────────────────────
+    usage = response.usage
+    tls_consume(
+        user_id=request.user_id,
+        request_id=tls_request_id,
+        actual_input=usage.prompt_tokens,
+        actual_output=usage.completion_tokens,
+    )
+```
+
+### FastAPI environment variables needed
+
 ```bash
 TLS_API_KEY=sk-tls-changeme
-TLS_BASE_URL=http://tls:8000
+TLS_BASE_URL=http://localhost:8000   # or http://tls:8000 if running in Docker together
 ```
 
 ---
@@ -461,6 +497,6 @@ kubectl apply -f k8s/cronjob-reaper.yaml
 
 ## GitHub
 
-**Repository:** https://github.com/Mkd-Yonas/User-Token-Limit-Service
+**Repository:** https://github.com/MKD-CORP/User-Token-Limit-Service
 
 Open a GitHub Issue for bugs or integration questions.

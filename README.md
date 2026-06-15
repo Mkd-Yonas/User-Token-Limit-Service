@@ -7,36 +7,55 @@
 
 ## What Is This?
 
-TLS is a **standalone FastAPI microservice** that enforces token quotas and rate limits for LLM/AI systems. The RAG FastAPI calls TLS before and after every LLM request. Next.js frontend calls TLS to show usage dashboards.
+TLS is a **standalone FastAPI microservice** that enforces token quotas and rate limits for LLM/AI systems. It wraps the entire conversation turn in the RAG FastAPI — which is a **multi-agent orchestrator** that can trigger up to 30 model calls across multiple LLMs and subagents per user message. Next.js calls TLS to show usage dashboards.
 
 **TLS never touches the LLM itself — it only validates and records.**
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
-│   Next.js   │────▶│  RAG FastAPI│────▶│  LLM (vLLM)     │
-│  (Frontend) │     │  (Gateway)  │     │  Keural-SFT2    │
-└─────────────┘     └──────┬──────┘     └─────────────────┘
-                           │                      │
-                    [check]│[consume]              │
-                           ▼                      ▼
-                    ┌─────────────┐        ┌─────────────┐
-                    │     TLS     │        │  Spring API │
-                    │  (This svc) │        │  (Database) │
-                    └──────┬──────┘        └─────────────┘
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-          ┌──────┐   ┌──────────┐  ┌──────────┐
-          │Redis │   │PostgreSQL│  │Prometheus│
-          └──────┘   └──────────┘  └──────────┘
+┌───────────┐     ┌─────────────────────────────────────────────────────┐
+│  Next.js  │────▶│           RAG FastAPI  (mkd-keural-be-fastapi)      │
+│ (Frontend)│     │                                                     │
+└───────────┘     │  process_response()                                 │
+                  │    │                                                 │
+                  │  [TLS check] ◀─── before orchestrator starts        │
+                  │    │                                                 │
+                  │  stream_agent()  ── Coordinator                     │
+                  │    │                  ├─ rag-agent                  │
+                  │    │                  ├─ web-agent                  │
+                  │    │                  └─ file-creation-agent        │
+                  │    │                                                 │
+                  │    ├─────────────────────────────────────────┐      │
+                  │    ▼                                         ▼      │
+                  │  ┌────────┐  ┌────────┐  ┌──────┐  ┌──────────┐   │
+                  │  │ Keural │  │ Gemma  │  │ Qwen │  │  GPT-OSS │   │
+                  │  │ (vLLM) │  │ (vLLM) │  │(vLLM)│  │  (vLLM)  │   │
+                  │  └────────┘  └────────┘  └──────┘  └──────────┘   │
+                  │    │                                                 │
+                  │  [TLS consume] ◀── after full turn completes        │
+                  └──────────────────────┬──────────────────────────────┘
+                                         │
+                                 ┌───────▼──────┐
+                                 │  Spring API  │
+                                 │  (Database)  │
+                                 └──────────────┘
+
+                         ┌─────────────┐
+                         │     TLS     │  ◀── This service
+                         └──────┬──────┘
+                                │
+               ┌────────────────┼────────────────┐
+               ▼                ▼                ▼
+           ┌──────┐      ┌──────────┐      ┌──────────┐
+           │Redis │      │PostgreSQL│      │Prometheus│
+           └──────┘      └──────────┘      └──────────┘
 ```
 
 ---
 
 ## How It Works
 
-1. **RAG FastAPI calls `/v1/limits/check` before every LLM request** → TLS checks if the user has quota. Returns `allowed: true` or `429 blocked`.
-2. **RAG FastAPI calls `/v1/limits/consume` after every LLM response** → TLS records actual tokens used and updates the balance.
+1. **RAG FastAPI calls `/v1/limits/check` at the start of every conversation turn** → TLS checks if the user has quota. Returns `allowed: true` or `429 blocked`.
+2. **RAG FastAPI calls `/v1/limits/consume` after the full turn completes** → TLS records actual tokens used across all model calls that turn and updates the balance.
 3. **Next.js calls `/v1/limits/usage`** → TLS returns daily/monthly usage for the dashboard.
 
 ---
@@ -101,7 +120,7 @@ User-Token-Limit-Service/
 
 ```bash
 # 1. Clone
-git clone https://github.com/Mkd-Yonas/User-Token-Limit-Service.git
+git clone https://github.com/MKD-CORP/User-Token-Limit-Service.git
 cd User-Token-Limit-Service
 
 # 2. Create config

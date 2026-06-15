@@ -36,7 +36,7 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - ../.env.example
+      - ../.env
     environment:
       TLS_DATABASE_URL: postgresql+asyncpg://tls:secret@postgres:5432/tls
       TLS_REDIS_URL: redis://redis:6379/0
@@ -50,15 +50,6 @@ services:
         alembic upgrade head &&
         uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
       "
-
-  prometheus:
-    image: prom/prometheus:latest
-    volumes:
-      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports:
-      - "9090:9090"
-    depends_on:
-      - tls
 
 volumes:
   pg_data:

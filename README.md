@@ -7,13 +7,13 @@
 
 ## What Is This?
 
-TLS is a **standalone FastAPI microservice** that enforces token quotas and rate limits for LLM/AI systems. It wraps the entire conversation turn in the RAG FastAPI — which is a **multi-agent orchestrator** that can trigger up to 30 model calls across multiple LLMs and subagents per user message. Next.js calls TLS to show usage dashboards.
+TLS is a **standalone FastAPI microservice** that enforces token quotas and rate limits for LLM/AI systems. It wraps the entire conversation turn in the Keural FastAPI — which is a **multi-agent orchestrator** that can trigger up to 30 model calls across multiple LLMs and subagents per user message. Next.js calls TLS to show usage dashboards.
 
 **TLS never touches the LLM itself — it only validates and records.**
 
 ```
 ┌───────────┐     ┌─────────────────────────────────────────────────────┐
-│  Next.js  │────▶│           RAG FastAPI  (mkd-keural-be-fastapi)      │
+│  Next.js  │────▶│           Keural FastAPI  (mkd-keural-be-fastapi)      │
 │ (Frontend)│     │                                                     │
 └───────────┘     │  process_response()                                 │
                   │    │                                                 │
@@ -54,8 +54,8 @@ TLS is a **standalone FastAPI microservice** that enforces token quotas and rate
 
 ## How It Works
 
-1. **RAG FastAPI calls `/v1/limits/check` at the start of every conversation turn** → TLS checks if the user has quota. Returns `allowed: true` or `429 blocked`.
-2. **RAG FastAPI calls `/v1/limits/consume` after the full turn completes** → TLS records actual tokens used across all model calls that turn and updates the balance.
+1. **Keural FastAPI calls `/v1/limits/check` at the start of every conversation turn** → TLS checks if the user has quota. Returns `allowed: true` or `429 blocked`.
+2. **Keural FastAPI calls `/v1/limits/consume` after the full turn completes** → TLS records actual tokens used across all model calls that turn and updates the balance.
 3. **Next.js calls `/v1/limits/usage`** → TLS returns daily/monthly usage for the dashboard.
 
 ---
@@ -259,7 +259,7 @@ Response 200:
 |----------|---------|-------------|
 | `TLS_DATABASE_URL` | `postgresql+asyncpg://tls:secret@localhost:5432/tls` | PostgreSQL connection |
 | `TLS_REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
-| `TLS_API_KEY` | `sk-tls-changeme` | Service key — RAG FastAPI uses this |
+| `TLS_API_KEY` | `sk-tls-changeme` | Service key — Keural FastAPI uses this |
 | `TLS_ADMIN_API_KEY` | `sk-tls-admin-changeme` | Admin key — admin panel uses this |
 | `TLS_DEFAULT_TIER` | `free` | Tier for users not in the database |
 | `TLS_GRACE_PERCENTAGE` | `5` | % overage allowed before flagging |
@@ -299,9 +299,9 @@ Add custom models in [app/utils/token_estimator.py](app/utils/token_estimator.py
 
 ---
 
-## RAG FastAPI Integration
+## Keural FastAPI Integration
 
-TLS integrates into the RAG FastAPI (`mkd-keural-be-fastapi`) in two steps.
+TLS integrates into the Keural FastAPI (`mkd-keural-be-fastapi`) in two steps.
 
 The system is a **multi-agent orchestrator** — one user message can trigger up to 30 model calls across multiple subagents (RAG, Web, File Creation) and multiple LLM models (Keural, Gemma, Qwen, GPT-OSS). There is no single `response.usage` to read. TLS wraps the **entire turn** at the single entry point: `process_response()` in `app/service/chat/process.py`.
 

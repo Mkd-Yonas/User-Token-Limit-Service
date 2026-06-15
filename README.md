@@ -12,42 +12,42 @@ TLS is a **standalone FastAPI microservice** that enforces token quotas and rate
 **TLS never touches the LLM itself — it only validates and records.**
 
 ```
-┌───────────┐     ┌─────────────────────────────────────────────────────┐
-│  Next.js  │────▶│           Keural FastAPI  (mkd-keural-be-fastapi)      │
-│ (Frontend)│     │                                                     │
-└───────────┘     │  process_response()                                 │
-                  │    │                                                 │
-                  │  [TLS check] ◀─── before orchestrator starts        │
-                  │    │                                                 │
-                  │  stream_agent()  ── Coordinator                     │
-                  │    │                  ├─ rag-agent                  │
-                  │    │                  ├─ web-agent                  │
-                  │    │                  └─ file-creation-agent        │
-                  │    │                                                 │
-                  │    ├─────────────────────────────────────────┐      │
-                  │    ▼                                         ▼      │
-                  │  ┌────────┐  ┌────────┐  ┌──────┐  ┌──────────┐   │
-                  │  │ Keural │  │ Gemma  │  │ Qwen │  │  GPT-OSS │   │
-                  │  │ (vLLM) │  │ (vLLM) │  │(vLLM)│  │  (vLLM)  │   │
-                  │  └────────┘  └────────┘  └──────┘  └──────────┘   │
-                  │    │                                                 │
-                  │  [TLS consume] ◀── after full turn completes        │
-                  └──────────────────────┬──────────────────────────────┘
-                                         │
-                                 ┌───────▼──────┐
-                                 │  Spring API  │
-                                 │  (Database)  │
-                                 └──────────────┘
+┌───────────┐     ┌──────────────────────────────────────────────────────────┐
+│  Next.js  │────▶│       Keural FastAPI  (mkd-keural-be-fastapi)            │
+│ (Frontend)│     │                                                          │
+└───────────┘     │  process_response()                                      │
+                  │    │                                                      │
+                  │  [TLS check] ◀─── before orchestrator starts             │
+                  │    │                                                      │
+                  │  stream_agent()  ── Coordinator                          │
+                  │    │                  ├─ rag-agent                       │
+                  │    │                  ├─ web-agent                       │
+                  │    │                  └─ file-creation-agent             │
+                  │    │                                                      │
+                  │    ├──────────────────────────────────────────┐          │
+                  │    ▼                                          ▼          │
+                  │  ┌────────┐  ┌────────┐  ┌──────┐  ┌──────────┐        │
+                  │  │ Keural │  │ Gemma  │  │ Qwen │  │  GPT-OSS │        │
+                  │  │ (vLLM) │  │ (vLLM) │  │(vLLM)│  │  (vLLM)  │        │
+                  │  └────────┘  └────────┘  └──────┘  └──────────┘        │
+                  │    │                                                      │
+                  │  [TLS consume] ◀── after full turn completes             │
+                  └─────────────────────────┬────────────────────────────────┘
+                                            │
+                                    ┌───────▼──────┐
+                                    │  Spring API  │
+                                    │  (Database)  │
+                                    └──────────────┘
 
-                         ┌─────────────┐
-                         │     TLS     │  ◀── This service
-                         └──────┬──────┘
-                                │
-               ┌────────────────┼────────────────┐
-               ▼                ▼                ▼
-           ┌──────┐      ┌──────────┐      ┌──────────┐
-           │Redis │      │PostgreSQL│      │Prometheus│
-           └──────┘      └──────────┘      └──────────┘
+                          ┌─────────────┐
+                          │     TLS     │  ◀── This service
+                          └──────┬──────┘
+                                 │
+                ┌────────────────┼────────────────┐
+                ▼                ▼                ▼
+            ┌──────┐      ┌──────────┐      ┌──────────┐
+            │Redis │      │PostgreSQL│      │Prometheus│
+            └──────┘      └──────────┘      └──────────┘
 ```
 
 ---

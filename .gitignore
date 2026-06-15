@@ -14,8 +14,7 @@ venv/
 .venv/
 env/
 
-# Environment files — NEVER commit real secrets
-.env
+# Environment files
 *.env.local
 
 # IDE

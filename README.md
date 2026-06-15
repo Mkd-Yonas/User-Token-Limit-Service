@@ -284,6 +284,8 @@ Add custom models in [app/utils/token_estimator.py](app/utils/token_estimator.py
 
 TLS integrates into the RAG FastAPI (`mkd-keural-be-fastapi`) in two steps.
 
+The system is a **multi-agent orchestrator** — one user message can trigger up to 30 model calls across multiple subagents (RAG, Web, File Creation) and multiple LLM models (Keural, Gemma, Qwen, GPT-OSS). There is no single `response.usage` to read. TLS wraps the **entire turn** at the single entry point: `process_response()` in `app/service/chat/process.py`.
+
 ### Step 1 — Add `app/services/tls_client.py`
 
 ```python
@@ -336,52 +338,93 @@ def tls_consume(user_id: str, request_id: str, actual_input: int, actual_output:
         logger.error("TLS consume failed: %s", e)
 ```
 
-### Step 2 — Modify the LLM endpoint
+### Step 2 — Modify `app/service/chat/process.py`
 
-Wrap the `_client.chat.completions.create()` call with TLS check and consume:
+Add TLS check **before** `stream_agent()` and TLS consume **inside the existing `finally` block**:
 
 ```python
 from app.services.tls_client import tls_check, tls_consume
 import uuid
 
-@app.post("/ask", response_model=QueryResponse)
-def ask(request: ChatRequest):  # ChatRequest already has user_id and room_id
+async def process_response(chatRequest: ChatRequest, backgroundTasks: BackgroundTasks) -> AsyncGenerator[bytes, None]:
+    cancelled = False
+    assistant_message_id = None
+    assistant_message = ""
+    user_id = ""
+    room_id = ""
 
-    # Generate a unique ID for this specific message
+    # Generate a unique TLS request ID for this turn
     tls_request_id = str(uuid.uuid4())
 
-    # Estimate tokens before the LLM call
-    estimated_input  = len(request.query) // 4 + 800  # query + RAG context overhead
-    estimated_output = 512                             # MAX_TOKENS
+    try:
+        # ... existing code to extract fields (steps [1], [1-1], [1-2], [2]) unchanged ...
+        user_id = normalize_message(chatRequest.user_id)
+        room_id = chatRequest.room_id
+        user_message = normalize_message(chatRequest.message)
 
-    # ── TLS Check (before LLM) ────────────────────────────────────────────────
-    tls_result, status_code = tls_check(
-        user_id=request.user_id,
-        request_id=tls_request_id,
-        estimated_input=estimated_input,
-        estimated_output=estimated_output,
-    )
-    if status_code == 429:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "Token quota exceeded",
-                "reason": tls_result.get("reason"),
-                "resets_at": tls_result.get("resets_at"),
-            }
+        # ── TLS Check (before orchestrator) ───────────────────────────────────
+        estimated_input  = len(user_message) // 4 + 500
+        estimated_output = 1000  # orchestrator runs up to 30 model calls per turn
+
+        tls_result, status_code = tls_check(
+            user_id=user_id,
+            request_id=tls_request_id,
+            estimated_input=estimated_input,
+            estimated_output=estimated_output,
+        )
+        if status_code == 429:
+            for line in generate_class_stream_response(classification="QUOTA_EXCEEDED"):
+                yield line
+            return
+
+        # ── [3] Run orchestration agent — unchanged ───────────────────────────
+        async for sse_bytes in stream_agent(
+            user_message=user_message,
+            ctx=run_ctx,
+            sources_collector=sources,
+            model_name=model,
+        ):
+            assistant_message += format_stream_message(sse_bytes)
+            yield sse_bytes
+            await asyncio.sleep(0)
+
+    except asyncio.CancelledError:
+        cancelled = True
+    except Exception as e:
+        logger.error(f"{__name__}.process_response: Unexpected error: {e}")
+
+    finally:
+        # ── TLS Consume (after full turn completes) ───────────────────────────
+        # No single response.usage — orchestrator makes multiple model calls.
+        # Estimate from actual collected message lengths.
+        actual_input  = len(user_message) // 4 + 500
+        actual_output = len(assistant_message) // 4
+
+        tls_consume(
+            user_id=user_id,
+            request_id=tls_request_id,
+            actual_input=actual_input,
+            actual_output=actual_output,
         )
 
-    # ... existing retrieval and LLM call ...
-    response = _client.chat.completions.create(...)
+        # ... existing finalize_task code unchanged ...
+        finalize_task = asyncio.create_task(
+            _finalize_response(
+                user_message=user_message,
+                assistant_message=assistant_message,
+                user_id=user_id,
+                room_id=room_id,
+                assistant_message_id=assistant_message_id,
+                sources=sources or None,
+            )
+        )
+        try:
+            await asyncio.shield(finalize_task)
+        except Exception as e:
+            logger.error(f"{__name__}.process_response: Finalize error: {e}")
 
-    # ── TLS Consume (after LLM) ───────────────────────────────────────────────
-    usage = response.usage
-    tls_consume(
-        user_id=request.user_id,
-        request_id=tls_request_id,
-        actual_input=usage.prompt_tokens,
-        actual_output=usage.completion_tokens,
-    )
+        if cancelled:
+            raise asyncio.CancelledError
 ```
 
 ### FastAPI environment variables needed

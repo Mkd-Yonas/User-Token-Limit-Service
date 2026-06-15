@@ -14,9 +14,6 @@ venv/
 .venv/
 env/
 
-# Environment files
-*.env.local
-
 # IDE
 .vscode/
 .idea/

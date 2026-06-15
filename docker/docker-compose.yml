@@ -35,7 +35,7 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - ../.env
+      - ../.env.dev
     environment:
       TLS_DATABASE_URL: postgresql+asyncpg://tls:secret@postgres:5432/tls
       TLS_REDIS_URL: redis://redis:6379/0

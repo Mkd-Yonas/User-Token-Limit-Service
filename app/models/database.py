@@ -27,7 +27,7 @@ class TLSTier(Base):
 class TLSUser(Base):
     __tablename__ = "tls_users"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     org_id: Mapped[Optional[uuid.UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     tier_id: Mapped[str] = mapped_column(String(50), ForeignKey("tls_tiers.tier_id"), default="free")
     custom_limits: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
@@ -42,7 +42,7 @@ class TLSUsage(Base):
     __tablename__ = "tls_usage"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     org_id: Mapped[Optional[uuid.UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     request_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     period_type: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -59,7 +59,7 @@ class TLSLimitChange(Base):
     __tablename__ = "tls_limit_changes"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     org_id: Mapped[Optional[uuid.UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     changed_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     old_limits: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)

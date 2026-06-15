@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -56,7 +55,7 @@ async def limits_consume(
 
 @router.get("/usage", response_model=UsageResponse, summary="Current period usage for a user")
 async def limits_usage(
-    user_id: uuid.UUID = Query(...),
+    user_id: str = Query(...),
     _key: str = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
@@ -64,11 +63,10 @@ async def limits_usage(
     now_utc = datetime.now(timezone.utc)
     today = now_utc.strftime("%Y-%m-%d")
     month = now_utc.strftime("%Y-%m")
-    uid = str(user_id)
 
-    limits = await get_user_limits(uid, db, redis)
-    daily_used = await get_daily_usage(uid, today, db, redis)
-    monthly_used = await get_monthly_usage(uid, month, db, redis)
+    limits = await get_user_limits(user_id, db, redis)
+    daily_used = await get_daily_usage(user_id, today, db, redis)
+    monthly_used = await get_monthly_usage(user_id, month, db, redis)
 
     tomorrow = (now_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -86,7 +84,7 @@ async def limits_usage(
 
 @router.get("/history", response_model=HistoryResponse, summary="Paginated usage history")
 async def limits_history(
-    user_id: uuid.UUID = Query(...),
+    user_id: str = Query(...),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     _key: str = Depends(verify_api_key),

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 # ── /limits/check ─────────────────────────────────────────────────────────────
 
 class CheckRequest(BaseModel):
-    user_id: uuid.UUID
+    user_id: str
     org_id: Optional[uuid.UUID] = None
     estimated_input_tokens: int = Field(ge=0)
     estimated_output_tokens: int = Field(ge=0)
@@ -38,7 +38,7 @@ class CheckBlockedResponse(BaseModel):
 # ── /limits/consume ───────────────────────────────────────────────────────────
 
 class ConsumeRequest(BaseModel):
-    user_id: uuid.UUID
+    user_id: str
     request_id: uuid.UUID
     actual_input_tokens: int = Field(ge=0)
     actual_output_tokens: int = Field(ge=0)
@@ -57,7 +57,7 @@ class ConsumeResponse(BaseModel):
 # ── /limits/usage ─────────────────────────────────────────────────────────────
 
 class UsageResponse(BaseModel):
-    user_id: uuid.UUID
+    user_id: str
     tier: str
     daily_used: int
     daily_limit: Optional[int]
@@ -80,7 +80,7 @@ class HistoryRecord(BaseModel):
 
 
 class HistoryResponse(BaseModel):
-    user_id: uuid.UUID
+    user_id: str
     page: int
     page_size: int
     total: int
@@ -90,7 +90,7 @@ class HistoryResponse(BaseModel):
 # ── /admin/limits ─────────────────────────────────────────────────────────────
 
 class AdminSetLimitsRequest(BaseModel):
-    user_id: Optional[uuid.UUID] = None
+    user_id: Optional[str] = None
     org_id: Optional[uuid.UUID] = None
     limits: dict[str, Any]
     reason: Optional[str] = None
@@ -99,7 +99,7 @@ class AdminSetLimitsRequest(BaseModel):
 
 class AdminSetLimitsResponse(BaseModel):
     updated: bool
-    user_id: Optional[uuid.UUID]
+    user_id: Optional[str]
     org_id: Optional[uuid.UUID]
     new_limits: dict[str, Any]
 
@@ -107,7 +107,7 @@ class AdminSetLimitsResponse(BaseModel):
 # ── /admin/refill ─────────────────────────────────────────────────────────────
 
 class AdminRefillRequest(BaseModel):
-    user_id: uuid.UUID
+    user_id: str
     tokens: int = Field(gt=0)
     reason: Optional[str] = None
     changed_by: str
@@ -115,7 +115,7 @@ class AdminRefillRequest(BaseModel):
 
 class AdminRefillResponse(BaseModel):
     refilled: bool
-    user_id: uuid.UUID
+    user_id: str
     tokens_added: int
     new_balance: int
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import uuid
-from typing import Any, Optional
+from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -10,132 +10,53 @@ from pydantic import BaseModel, Field
 
 class CheckRequest(BaseModel):
     user_id: str
-    org_id: Optional[uuid.UUID] = None
-    estimated_input_tokens: int = Field(ge=0)
-    estimated_output_tokens: int = Field(ge=0)
-    model_id: str = "gpt-4o"
-    request_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    estimated_tokens: int = Field(default=0, ge=0)
 
 
-class CheckAllowedResponse(BaseModel):
-    allowed: bool = True
-    request_id: uuid.UUID
-    remaining_tokens: int
-    resets_at: str
-    tier: str
-
-
-class CheckBlockedResponse(BaseModel):
-    allowed: bool = False
-    reason: str
-    limit_type: str
-    current_usage: Optional[int] = None
-    limit: Optional[int] = None
-    resets_at: str
-    suggested_action: str
+class CheckResponse(BaseModel):
+    allowed: bool
+    tokens_used: int
+    token_limit: int
+    unblocked_at: Optional[datetime] = None
+    reason: Optional[str] = None
 
 
 # ── /limits/consume ───────────────────────────────────────────────────────────
 
 class ConsumeRequest(BaseModel):
     user_id: str
-    request_id: uuid.UUID
-    actual_input_tokens: int = Field(ge=0)
-    actual_output_tokens: int = Field(ge=0)
-    model_id: str = "gpt-4o"
-    metadata: Optional[dict[str, Any]] = None
+    tokens: int = Field(ge=0)
 
 
 class ConsumeResponse(BaseModel):
     consumed: bool
-    total_deducted: int
-    new_balance: int
-    overage: int
-    refunded: int
+    tokens_used: int
+    token_limit: int
+    blocked: bool
+    unblocked_at: Optional[datetime] = None
 
 
-# ── /limits/usage ─────────────────────────────────────────────────────────────
+# ── /limits/status ────────────────────────────────────────────────────────────
 
-class UsageResponse(BaseModel):
+class StatusResponse(BaseModel):
     user_id: str
-    tier: str
-    daily_used: int
-    daily_limit: Optional[int]
-    monthly_used: int
-    monthly_limit: Optional[int]
-    resets_at: str
-    period_date: str
+    tokens_used: int
+    token_limit: int
+    blocked: bool
+    blocked_at: Optional[datetime] = None
+    unblocked_at: Optional[datetime] = None
 
 
-# ── /limits/history ───────────────────────────────────────────────────────────
+# ── /admin/reset ──────────────────────────────────────────────────────────────
 
-class HistoryRecord(BaseModel):
-    request_id: uuid.UUID
-    tokens_input: int
-    tokens_output: int
-    tokens_total: int
-    model_id: Optional[str]
-    created_at: str
-    metadata: Optional[dict[str, Any]]
-
-
-class HistoryResponse(BaseModel):
+class AdminResetRequest(BaseModel):
     user_id: str
-    page: int
-    page_size: int
-    total: int
-    records: list[HistoryRecord]
+    reset_by: str = "admin"
 
 
-# ── /admin/limits ─────────────────────────────────────────────────────────────
-
-class AdminSetLimitsRequest(BaseModel):
-    user_id: Optional[str] = None
-    org_id: Optional[uuid.UUID] = None
-    limits: dict[str, Any]
-    reason: Optional[str] = None
-    changed_by: str
-
-
-class AdminSetLimitsResponse(BaseModel):
-    updated: bool
-    user_id: Optional[str]
-    org_id: Optional[uuid.UUID]
-    new_limits: dict[str, Any]
-
-
-# ── /admin/refill ─────────────────────────────────────────────────────────────
-
-class AdminRefillRequest(BaseModel):
+class AdminResetResponse(BaseModel):
+    reset: bool
     user_id: str
-    tokens: int = Field(gt=0)
-    reason: Optional[str] = None
-    changed_by: str
-
-
-class AdminRefillResponse(BaseModel):
-    refilled: bool
-    user_id: str
-    tokens_added: int
-    new_balance: int
-
-
-# ── /admin/tiers ──────────────────────────────────────────────────────────────
-
-class TierCreate(BaseModel):
-    tier_id: str = Field(max_length=50)
-    name: str = Field(max_length=100)
-    limits: dict[str, Any]
-    cost_multiplier: float = Field(default=1.0, ge=0)
-    is_active: bool = True
-
-
-class TierResponse(BaseModel):
-    tier_id: str
-    name: str
-    limits: dict[str, Any]
-    cost_multiplier: float
-    is_active: bool
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -146,5 +67,4 @@ class HealthLiveResponse(BaseModel):
 
 class HealthReadyResponse(BaseModel):
     status: str
-    postgres: str
-    redis: str
+    mongodb: str

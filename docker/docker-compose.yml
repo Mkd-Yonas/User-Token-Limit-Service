@@ -1,31 +1,16 @@
 version: "3.9"
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: tls
-      POSTGRES_PASSWORD: secret
-      POSTGRES_DB: tls
+  mongodb:
+    image: mongo:7
     ports:
-      - "5432:5432"
+      - "27017:27017"
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - mongo_data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tls"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 5s
       timeout: 5s
-      retries: 10
-
-  redis:
-    image: redis:7-alpine
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
       retries: 10
 
   tls:
@@ -33,22 +18,14 @@ services:
       context: ..
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8002:8000"
     env_file:
       - ../.env.dev
     environment:
-      TLS_DATABASE_URL: postgresql+asyncpg://tls:secret@postgres:5432/tls
-      TLS_REDIS_URL: redis://redis:6379/0
+      TLS_MONGO_URL: mongodb://mongodb:27017
     depends_on:
-      postgres:
+      mongodb:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: >
-      sh -c "
-        alembic upgrade head &&
-        uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
-      "
 
 volumes:
-  pg_data:
+  mongo_data:

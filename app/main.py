@@ -23,15 +23,15 @@ async def lifespan(app: FastAPI):
     global _mongo_client
     _mongo_client = AsyncIOMotorClient(settings.mongo_url, tz_aware=True)
     set_db(_mongo_client[settings.mongo_db])
-    logger.info("TLS service started — MongoDB: %s / %s", settings.mongo_url, settings.mongo_db)
+    logger.info("TQS service started — MongoDB: %s / %s", settings.mongo_url, settings.mongo_db)
     yield
     _mongo_client.close()
-    logger.info("TLS service stopped")
+    logger.info("TQS service stopped")
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Token Limit Service",
+        title="Token Quota Service",
         description="Token usage enforcement for LLM systems.",
         version="2.0.0",
         lifespan=lifespan,

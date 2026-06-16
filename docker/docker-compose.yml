@@ -13,7 +13,7 @@ services:
       timeout: 5s
       retries: 10
 
-  tls:
+  tqs:
     build:
       context: ..
       dockerfile: Dockerfile
@@ -22,7 +22,7 @@ services:
     env_file:
       - ../.env.dev
     environment:
-      TLS_MONGO_URL: mongodb://mongodb:27017
+      TQS_MONGO_URL: mongodb://mongodb:27017
     depends_on:
       mongodb:
         condition: service_healthy

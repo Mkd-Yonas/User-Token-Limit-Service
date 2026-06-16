@@ -3,7 +3,7 @@ set -euo pipefail
 
 # default = local
 TARGET_ENV="${1:-local}"
-SERVICE_NAME="keural-tls"
+SERVICE_NAME="keural-tqs"
 
 ROOT_DIR="${WORKSPACE:-$(pwd)}"
 BUILD_DIR="$ROOT_DIR"

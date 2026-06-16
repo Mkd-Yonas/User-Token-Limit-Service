@@ -6,7 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.config import settings
 
-COLLECTION = "tls_users"
+COLLECTION = "tqs_users"
 
 
 def _now() -> datetime:

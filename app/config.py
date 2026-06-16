@@ -2,15 +2,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="TLS_", env_file=".env.local", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="TQS_", env_file=".env.local", extra="ignore")
 
     # MongoDB
     mongo_url: str = "mongodb://localhost:27017"
-    mongo_db: str = "tls"
+    mongo_db: str = "tqs"
 
     # API keys
-    api_key: str = "sk-tls-changeme"
-    admin_api_key: str = "sk-tls-admin-changeme"
+    api_key: str = "sk-tqs-changeme"
+    admin_api_key: str = "sk-tqs-admin-changeme"
 
     # Token limit policy
     token_limit: int = 50000       # tokens per window

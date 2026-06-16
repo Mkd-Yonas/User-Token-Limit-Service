@@ -1,7 +1,10 @@
 # TQS (Token Quota Service)
 
-> **성용 팀장님께** — TQS 모듈 구조 및 동작 방식 정리 문서입니다.
-> 검토 후 수정 제안이 있으시면 언제든지 말씀해 주세요.
+> ⚠️ **이 레포지토리는 더 이상 사용되지 않습니다 (Deprecated)**
+>
+> 토큰 쿼터 로직은 Spring API(`mkd-keural-be-spring`)로 이관되었으며, 데이터는 기존 Keural PostgreSQL(`token_quota_tb` 테이블)에 저장됩니다.
+> Keural FastAPI는 이제 이 서비스 대신 Spring의 `/api/token-quota/*` 엔드포인트를 직접 호출합니다.
+> 이 레포지토리와 MongoDB 컨테이너는 Spring 구현 완료 후 제거될 예정입니다.
 
 ---
 
